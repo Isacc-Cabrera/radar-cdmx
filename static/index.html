@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Radar CDMX</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            font-family: system-ui, sans-serif;
+        }
+
+        #mapa {
+            height: 100%;
+        }
+
+        #panel {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 1000;
+            background: #fff;
+            padding: 10px 14px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+            font-size: 14px;
+        }
+
+        #panel strong {
+            font-size: 22px;
+        }
+
+        .avion svg {
+            display: block;
+            transition: transform .5s;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="mapa"></div>
+    <div id="panel">
+        <strong id="total">…</strong> aviones<br>
+        <span id="estado">conectando…</span>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const AICM = [19.4361, -99.0719];
+        const mapa = L.map("mapa").setView(AICM, 10);
+
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 18,
+            attribution: "&copy; OpenStreetMap | Datos: OpenSky Network",
+        }).addTo(mapa);
+
+        // Aeropuerto y radio de 10 km
+        L.marker(AICM).addTo(mapa).bindPopup("Aeropuerto Internacional de la CDMX");
+        L.circle(AICM, { radius: 10000, color: "#2563eb", fillOpacity: 0.05, weight: 1 }).addTo(mapa);
+
+        const marcadores = new Map(); // id del avión -> { marcador, rastro }
+
+        function color(avion) {
+            if (avion.en_tierra) return "#6b7280";      // gris: en tierra
+            if (avion.vel_vertical > 1) return "#16a34a";  // verde: subiendo
+            if (avion.vel_vertical < -1) return "#dc2626"; // rojo: bajando
+            return "#2563eb";                            // azul: nivelado
+        }
+
+        function icono(avion) {
+            // El dibujo apunta al norte; se gira según el rumbo del avión.
+            return L.divIcon({
+                className: "avion",
+                iconSize: [26, 26],
+                iconAnchor: [13, 13],
+                html: `<svg width="26" height="26" viewBox="0 0 24 24"
+                    style="transform: rotate(${avion.rumbo ?? 0}deg)">
+                 <path fill="${color(avion)}" stroke="#fff" stroke-width="0.8"
+                       d="M12 2 L14 10 L22 14 L22 16 L14 14 L13 20 L16 22 L8 22 L11 20 L10 14 L2 16 L2 14 L10 10 Z"/>
+               </svg>`,
+            });
+        }
+
+        function ficha(avion) {
+            const altitud = avion.en_tierra ? "en tierra" : `${Math.round(avion.altitud_m ?? 0)} m`;
+            return `<b>${avion.vuelo ?? avion.id}</b><br>
+              País: ${avion.pais}<br>
+              Altitud: ${altitud}<br>
+              Velocidad: ${avion.velocidad_kmh ?? "?"} km/h<br>
+              Rumbo: ${Math.round(avion.rumbo ?? 0)}°`;
+        }
+
+        function actualizar(aviones) {
+            const vistos = new Set();
+
+            for (const avion of aviones) {
+                vistos.add(avion.id);
+                const posicion = [avion.lat, avion.lon];
+                let registro = marcadores.get(avion.id);
+
+                if (!registro) {
+                    registro = {
+                        marcador: L.marker(posicion).addTo(mapa),
+                        rastro: L.polyline([posicion], { color: "#94a3b8", weight: 2 }).addTo(mapa),
+                    };
+                    marcadores.set(avion.id, registro);
+                } else {
+                    registro.marcador.setLatLng(posicion);
+                    registro.rastro.addLatLng(posicion);
+                }
+                registro.marcador.setIcon(icono(avion));
+                registro.marcador.bindPopup(ficha(avion));
+            }
+
+            // Quita los aviones que ya no vienen en el lote
+            for (const [id, registro] of marcadores) {
+                if (!vistos.has(id)) {
+                    registro.marcador.remove();
+                    registro.rastro.remove();
+                    marcadores.delete(id);
+                }
+            }
+            document.getElementById("total").textContent = aviones.length;
+        }
+
+        function conectar() {
+            const ws = new WebSocket(`ws://${location.host}/ws`);
+            const estado = document.getElementById("estado");
+            ws.onopen = () => estado.textContent = "en vivo";
+            ws.onmessage = (evento) => actualizar(JSON.parse(evento.data).aviones);
+            ws.onclose = () => {
+                estado.textContent = "reconectando…";
+                setTimeout(conectar, 3000);
+            };
+        }
+        conectar();
+    </script>
+</body>
+
+</html>

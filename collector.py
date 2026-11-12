@@ -21,7 +21,7 @@ def obtener_token():
     client_secret = os.getenv("OPENSKY_CLIENT_SECRET")
     if not client_id or not client_secret:
         return None  # modo anónimo
-    if time.time() < _token["expira"] - 60:
+    if time.time() < _token["expira"] - 60: 
         return _token["valor"]
     r = requests.post(TOKEN_URL, data={
         "grant_type": "client_credentials",
@@ -72,6 +72,7 @@ def consultar():
 
 
 if __name__ == "__main__":
+    print("Modo:", "autenticado" if obtener_token() else "anónimo")
     while True:
         try:
             aviones = consultar()
