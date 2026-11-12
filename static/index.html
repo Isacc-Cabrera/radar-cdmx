@@ -38,6 +38,27 @@
             display: block;
             transition: transform .5s;
         }
+
+        #leyenda {
+            position: absolute;
+            bottom: 24px;
+            left: 12px;
+            z-index: 1000;
+            background: #fff;
+            padding: 10px 14px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .25);
+            font-size: 13px;
+            line-height: 1.7;
+        }
+
+        #leyenda span {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
     </style>
 </head>
 
@@ -46,6 +67,12 @@
     <div id="panel">
         <strong id="total">…</strong> aviones<br>
         <span id="estado">conectando…</span>
+    </div>
+    <div id="leyenda">
+        <span style="background:#16a34a"></span>Subiendo<br>
+        <span style="background:#dc2626"></span>Bajando<br>
+        <span style="background:#2563eb"></span>Nivelado<br>
+        <span style="background:#6b7280"></span>En Tierra
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
