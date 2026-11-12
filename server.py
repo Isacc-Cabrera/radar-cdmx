@@ -5,7 +5,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
-from collector import consultar, INTERVALO
+from kafka import KafkaConsumer
+
+TEMA = "aviones"
+SERVIDOR_KAFKA = "127.0.0.1:9092"
 
 clientes: set[WebSocket] = set()   # navegadores conectados
 ultimo_lote: list[dict] = []       # últimas posiciones conocidas
@@ -24,22 +27,38 @@ async def difundir(mensaje: str):
             clientes.discard(ws)
 
 
-async def ciclo_recolector():
-    """Consulta OpenSky cada INTERVALO segundos y reparte el resultado."""
+def crear_consumidor():
+    return KafkaConsumer(
+        TEMA,
+        bootstrap_servers=SERVIDOR_KAFKA,
+        value_deserializer=lambda datos: json.loads(datos.decode("utf-8")),
+        auto_offset_reset="latest",  # solo mensajes nuevos, no el historial
+    )
+
+
+async def ciclo_consumidor():
+    """Lee lotes del tema de Kafka y los reparte a los navegadores."""
     global ultimo_lote
-    while True:
+    consumidor = None
+    while consumidor is None:
         try:
-            ultimo_lote = await asyncio.to_thread(consultar)
-            await difundir(empaquetar(ultimo_lote))
-            print(f"{len(ultimo_lote)} aviones -> {len(clientes)} clientes")
+            consumidor = await asyncio.to_thread(crear_consumidor)
         except Exception as error:
-            print(f"Error en el recolector: {error}")
-        await asyncio.sleep(INTERVALO)
+            print(f"Kafka no disponible ({error}); reintento en 5 s")
+            await asyncio.sleep(5)
+    print("Conectado a Kafka")
+    while True:
+        registros = await asyncio.to_thread(consumidor.poll, 1000)
+        for mensajes in registros.values():
+            for mensaje in mensajes:
+                ultimo_lote = mensaje.value["aviones"]
+                await difundir(empaquetar(ultimo_lote))
+                print(f"{len(ultimo_lote)} aviones -> {len(clientes)} clientes")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    tarea = asyncio.create_task(ciclo_recolector())
+    tarea = asyncio.create_task(ciclo_consumidor())
     yield
     tarea.cancel()
 

@@ -8,6 +8,7 @@ fastapi==0.162.5
 h11==0.16.0
 httptools==0.9.0
 idna==3.20
+kafka-python==3.0.13
 opentelemetry-api==1.45.2
 pydantic==2.14.3
 pydantic_core==2.50.4
