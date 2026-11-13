@@ -20,6 +20,8 @@ Mapa en vivo de los aviones que vuelan sobre el Valle de México. Los datos se o
 
 - Marca el Aeropuerto Internacional de la Ciudad de México y un radio de 10 km a su alrededor.
 - Muestra una ficha con vuelo, país, altitud, velocidad y rumbo al hacer clic en un avión.
+- Incluye una vista en 3D, donde cada avión flota a su altura real con un poste y una sombra sobre el mapa.
+- Avisa cuánto tiempo lleva sin datos nuevos si el productor deja de publicar (vista 3D).
 
 ## Arquitectura
 
@@ -35,6 +37,7 @@ OpenSky API ──► productor.py ──► Kafka (tema "aviones") ──► se
 | Kafka | `docker-compose.yml` | Guarda los mensajes entre el productor y el servidor |
 | Servidor | `server.py` | Lee de Kafka y reenvía cada lote por WebSocket |
 | Mapa | `static/index.html` | Recibe los lotes y actualiza los aviones en el mapa |
+| Mapa 3D | `static/index3d.html` | La misma información en un mapa inclinado, con la altitud de cada avión |
 
 El productor y el servidor no se conocen entre sí: solo comparten el tema de Kafka. Si el productor se detiene, el servidor y la página siguen funcionando con el último dato; cuando vuelve, el mapa retoma el movimiento sin recargar.
 
@@ -132,7 +135,8 @@ uvicorn server:app --reload
 
 **6. Abre el mapa**
 
-Entra a <http://localhost:8000>.
+- Vista plana: <http://localhost:8000>
+- Vista 3D: <http://localhost:8000/3d> (clic derecho y arrastrar para girar e inclinar)
 
 ## Configuración
 
@@ -143,29 +147,35 @@ Entra a <http://localhost:8000>.
 | `MAX_ANTIGUEDAD` | `collector.py` | 60 s | Descarta aviones sin contacto reciente |
 | `TEMA` | `productor.py`, `server.py` | `aviones` | Tema de Kafka |
 | `SERVIDOR_KAFKA` | `productor.py`, `server.py` | `127.0.0.1:9092` | Dirección de Kafka |
+| `ALTITUD_SUELO` | `static/index3d.html` | 2230 m | Altitud del valle que se resta para que un avión en la pista quede en 0 |
+| `EXAGERACION` | `static/index3d.html` | 2 | Multiplica la altura para que se note más en la vista 3D |
 
 Kafka corre en modo KRaft con un solo nodo y anuncia la dirección `127.0.0.1:9092` (`KAFKA_ADVERTISED_LISTENERS`). Se usa la dirección numérica en lugar de `localhost` porque en Windows el nombre `localhost` no siempre llega al contenedor y el cliente falla con `Unable to bootstrap from localhost:9092`.
 
 ## Limitaciones conocidas
 
-- **Aviones congelados:** si el productor se detiene, el mapa sigue mostrando "en vivo" con la última posición de cada avión. Falta avisar cuánto tiempo lleva sin datos nuevos.
+- **Aviones congelados en la vista plana:** si el productor se detiene, la vista plana sigue mostrando "en vivo" con la última posición de cada avión. La vista 3D ya avisa cuánto tiempo lleva sin datos nuevos.
 - **Cobertura:** los datos dependen de antenas de voluntarios, así que un avión puede desaparecer un momento aunque siga volando.
 - **Cupo de la API:** OpenSky limita las consultas diarias, y por eso el intervalo es de 15 segundos y no menor.
 - **Un mensaje por lote:** cada mensaje de Kafka lleva todos los aviones del momento. Con más volumen convendría un mensaje por avión, usando su identificador como clave.
 
 ## Mejoras futuras
 
-- Mapa en 3D con la altitud real de cada avión.
-- Aviso de "sin datos desde hace X segundos".
 - Guardar el historial para analizar rutas y horarios de mayor tráfico.
+- Ejecutar el productor y el servidor en contenedores de Docker.
+- Llevar el aviso de datos sin actualizar a la vista plana.
 
 ## Tecnologías
 
-Python, FastAPI, Uvicorn, Apache Kafka, Docker, Leaflet y OpenStreetMap.
+Python, FastAPI, Uvicorn, Apache Kafka, Docker, Leaflet, MapLibre GL JS y OpenStreetMap.
 
 ## Créditos
 
 - Datos de vuelos: [The OpenSky Network](https://opensky-network.org)
 - Mapa base: © colaboradores de [OpenStreetMap](https://www.openstreetmap.org/copyright)
+
+## Licencia
+
+MIT. Consulta el archivo `LICENSE`.
 
 Proyecto desarrollado por Angel Isacc Cabrera Leal para la materia Ingeniería de Software y Laboratorio, IBERO Ciudad de México, Otoño 2026.
