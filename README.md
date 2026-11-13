@@ -90,7 +90,7 @@ Los comandos son para Windows con PowerShell.
 **1. Clona el repositorio y crea el entorno virtual**
 
 ```powershell
-git clone <URL-de-tu-repositorio>
+git clone https://github.com/Isacc-Cabrera/radar-cdmx.git
 cd radar-cdmx
 python -m venv .venv
 .venv\Scripts\Activate.ps1
