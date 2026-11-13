@@ -70,6 +70,10 @@ app = FastAPI(lifespan=lifespan)
 def inicio():
     return FileResponse("static/index.html")
 
+@app.get("/3d")
+def mapa_3d():
+    return FileResponse("static/index3d.html")
+
 
 @app.websocket("/ws")
 async def canal(ws: WebSocket):

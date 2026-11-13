@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Radar CDMX 3D</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
+    #mapa { height: 100%; }
+    .caja {
+      position: absolute; z-index: 10; background: #fff; padding: 10px 14px;
+      border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.25);
+    }
+    #panel { top: 12px; left: 12px; font-size: 14px; }
+    #panel strong { font-size: 22px; }
+    #leyenda { bottom: 28px; left: 12px; font-size: 13px; line-height: 1.7; }
+    #leyenda span {
+      display: inline-block; width: 12px; height: 12px;
+      border-radius: 50%; margin-right: 6px;
+    }
+    #ayuda { bottom: 28px; right: 12px; font-size: 12px; color: #555; }
+  </style>
+</head>
+<body>
+  <div id="mapa"></div>
+  <div id="panel" class="caja">
+    <strong id="total">…</strong> aviones<br>
+    <span id="estado">conectando…</span>
+  </div>
+  <div id="leyenda" class="caja">
+    <span style="background:#16a34a"></span>Subiendo<br>
+    <span style="background:#dc2626"></span>Bajando<br>
+    <span style="background:#2563eb"></span>Nivelado<br>
+    <span style="background:#6b7280"></span>En tierra
+  </div>
+  <div id="ayuda" class="caja">Clic derecho + arrastrar para girar e inclinar</div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script>
+    // ---------- Configuración ----------
+    const AICM = [-99.0719, 19.4361];   // [longitud, latitud]
+    const ALTITUD_SUELO = 2230;         // metros sobre el nivel del mar del Valle de México
+    const EXAGERACION = 2;              // multiplica la altura para que se note más
+    const LARGO_AVION = 1400;           // tamaño del dibujo de cada avión, en metros
+    const GROSOR_AVION = 250;           // grosor vertical del dibujo, en metros
+
+    // ---------- Mapa ----------
+    const mapa = new maplibregl.Map({
+      container: "mapa",
+      style: {
+        version: 8,
+        sources: {
+          osm: {
+            type: "raster",
+            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+            tileSize: 256,
+            attribution: "&copy; OpenStreetMap | Datos: OpenSky Network",
+          },
+        },
+        layers: [{ id: "osm", type: "raster", source: "osm" }],
+      },
+      center: AICM,
+      zoom: 9.6,
+      pitch: 62,
+      bearing: -20,
+      maxPitch: 80,
+    });
+    mapa.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+
+    // ---------- Geometría ----------
+    // Mueve un punto [lon, lat] cierta cantidad de metros al este (dx) y al norte (dy).
+    function mover([lon, lat], dx, dy) {
+      const metrosPorGradoLat = 110540;
+      const metrosPorGradoLon = 111320 * Math.cos(lat * Math.PI / 180);
+      return [lon + dx / metrosPorGradoLon, lat + dy / metrosPorGradoLat];
+    }
+
+    // Gira un punto (x, y) según el rumbo del avión (0 = norte, 90 = este).
+    function girar(x, y, rumbo) {
+      const r = rumbo * Math.PI / 180;
+      return [x * Math.cos(r) + y * Math.sin(r), -x * Math.sin(r) + y * Math.cos(r)];
+    }
+
+    // Silueta de flecha que apunta hacia donde vuela el avión.
+    function siluetaAvion(centro, rumbo) {
+      const L = LARGO_AVION;
+      const puntos = [[0, L / 2], [L * 0.38, -L / 2], [0, -L * 0.25], [-L * 0.38, -L / 2]];
+      const anillo = puntos.map(([x, y]) => mover(centro, ...girar(x, y, rumbo)));
+      anillo.push(anillo[0]);
+      return [anillo];
+    }
+
+    function cuadrado(centro, lado) {
+      const m = lado / 2;
+      const anillo = [[-m, -m], [m, -m], [m, m], [-m, m], [-m, -m]].map(([x, y]) => mover(centro, x, y));
+      return [anillo];
+    }
+
+    function circulo(centro, radio, pasos = 72) {
+      const anillo = [];
+      for (let i = 0; i <= pasos; i++) {
+        const a = (i / pasos) * 2 * Math.PI;
+        anillo.push(mover(centro, radio * Math.cos(a), radio * Math.sin(a)));
+      }
+      return anillo;
+    }
+
+    function color(avion) {
+      if (avion.en_tierra) return "#6b7280";
+      if (avion.vel_vertical > 1) return "#16a34a";
+      if (avion.vel_vertical < -1) return "#dc2626";
+      return "#2563eb";
+    }
+
+    // Altura sobre el suelo del valle, ya exagerada.
+    function altura(avion) {
+      if (avion.en_tierra || avion.altitud_m == null) return 0;
+      return Math.max(0, avion.altitud_m - ALTITUD_SUELO) * EXAGERACION;
+    }
+
+    const vacio = () => ({ type: "FeatureCollection", features: [] });
+
+    // Convierte el lote de aviones en tres capas: avión, poste y sombra.
+    function construirCapas(aviones) {
+      const cuerpos = vacio(), postes = vacio(), sombras = vacio();
+      for (const avion of aviones) {
+        const centro = [avion.lon, avion.lat];
+        const h = altura(avion);
+        const silueta = siluetaAvion(centro, avion.rumbo ?? 0);
+        const datos = {
+          id: avion.id,
+          vuelo: avion.vuelo ?? avion.id,
+          pais: avion.pais ?? "",
+          altitud: avion.en_tierra ? "en tierra" : `${Math.round(avion.altitud_m ?? 0)} m`,
+          velocidad: avion.velocidad_kmh ?? "?",
+          rumbo: Math.round(avion.rumbo ?? 0),
+          color: color(avion),
+          base: h,
+          tope: h + GROSOR_AVION,
+        };
+        cuerpos.features.push({ type: "Feature", properties: datos, geometry: { type: "Polygon", coordinates: silueta } });
+        if (h > 0) {
+          postes.features.push({
+            type: "Feature",
+            properties: { color: datos.color, tope: h },
+            geometry: { type: "Polygon", coordinates: cuadrado(centro, 120) },
+          });
+          sombras.features.push({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: silueta } });
+        }
+      }
+      return { cuerpos, postes, sombras };
+    }
+
+    // ---------- Capas del mapa ----------
+    let listo = false;
+    let pendiente = null;
+
+    mapa.on("load", () => {
+      // Radio de 10 km alrededor del aeropuerto
+      mapa.addSource("radio", {
+        type: "geojson",
+        data: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: circulo(AICM, 10000) } },
+      });
+      mapa.addLayer({ id: "radio", type: "line", source: "radio", paint: { "line-color": "#2563eb", "line-width": 2 } });
+      new maplibregl.Marker({ color: "#2563eb" })
+        .setLngLat(AICM)
+        .setPopup(new maplibregl.Popup().setText("Aeropuerto Internacional de la CDMX"))
+        .addTo(mapa);
+
+      for (const nombre of ["sombras", "postes", "cuerpos"]) {
+        mapa.addSource(nombre, { type: "geojson", data: vacio() });
+      }
+      mapa.addLayer({
+        id: "sombras", type: "fill", source: "sombras",
+        paint: { "fill-color": "#000000", "fill-opacity": 0.25 },
+      });
+      mapa.addLayer({
+        id: "postes", type: "fill-extrusion", source: "postes",
+        paint: {
+          "fill-extrusion-color": ["get", "color"],
+          "fill-extrusion-height": ["get", "tope"],
+          "fill-extrusion-base": 0,
+          "fill-extrusion-opacity": 0.35,
+        },
+      });
+      mapa.addLayer({
+        id: "cuerpos", type: "fill-extrusion", source: "cuerpos",
+        paint: {
+          "fill-extrusion-color": ["get", "color"],
+          "fill-extrusion-height": ["get", "tope"],
+          "fill-extrusion-base": ["get", "base"],
+          "fill-extrusion-opacity": 0.95,
+        },
+      });
+
+      // Ficha al hacer clic en un avión
+      mapa.on("click", "cuerpos", (evento) => {
+        const p = evento.features[0].properties;
+        new maplibregl.Popup()
+          .setLngLat(evento.lngLat)
+          .setHTML(`<b>${p.vuelo}</b><br>País: ${p.pais}<br>Altitud: ${p.altitud}<br>Velocidad: ${p.velocidad} km/h<br>Rumbo: ${p.rumbo}°`)
+          .addTo(mapa);
+      });
+      mapa.on("mouseenter", "cuerpos", () => mapa.getCanvas().style.cursor = "pointer");
+      mapa.on("mouseleave", "cuerpos", () => mapa.getCanvas().style.cursor = "");
+
+      listo = true;
+      if (pendiente) actualizar(pendiente);
+    });
+
+    function actualizar(aviones) {
+      if (!listo) { pendiente = aviones; return; }
+      const capas = construirCapas(aviones);
+      mapa.getSource("cuerpos").setData(capas.cuerpos);
+      mapa.getSource("postes").setData(capas.postes);
+      mapa.getSource("sombras").setData(capas.sombras);
+      document.getElementById("total").textContent = aviones.length;
+    }
+
+    // ---------- Conexión en vivo ----------
+    let conectado = false;
+    let ultimoDato = null;
+
+    function conectar() {
+      const ws = new WebSocket(`ws://${location.host}/ws`);
+      ws.onopen = () => { conectado = true; };
+      ws.onmessage = (evento) => {
+        ultimoDato = Date.now();
+        actualizar(JSON.parse(evento.data).aviones);
+      };
+      ws.onclose = () => {
+        conectado = false;
+        setTimeout(conectar, 3000);
+      };
+    }
+    conectar();
+
+    // Avisa cuánto tiempo lleva el mapa sin recibir datos nuevos.
+    setInterval(() => {
+      const estado = document.getElementById("estado");
+      if (!conectado) { estado.textContent = "reconectando…"; return; }
+      if (ultimoDato === null) { estado.textContent = "esperando datos…"; return; }
+      const segundos = Math.round((Date.now() - ultimoDato) / 1000);
+      estado.textContent = segundos <= 25 ? "en vivo" : `sin datos desde hace ${segundos} s`;
+    }, 1000);
+  </script>
+</body>
+</html>
